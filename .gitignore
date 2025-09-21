@@ -1,0 +1,14 @@
+# AI Surveillance Camera - Simple .gitignore
+# Exclude specific directories only
+
+# Python cache
+__pycache__/
+
+# InsightFace models (large files)
+models/
+
+# TensorRT cache files  
+trt_cache/
+
+# Virtual environment
+venv/
