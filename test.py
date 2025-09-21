@@ -99,11 +99,12 @@ class Face(dict):
 
 
 class FaceTracker:
-    """Face embedding averaging system for 1-second windows
+    """Face embedding averaging system with fixed 1-second intervals
     
     Improvements:
     - Forces float32 for all embeddings to prevent ONNX float64 issues
-    - Uses 1-second averaging window for stable but responsive embeddings
+    - Collects embeddings for exactly 1 second, then calculates average
+    - Updates average every 1 second (not sliding window)
     - Real-time display of other parameters (age, gender)
     """
     
@@ -116,17 +117,20 @@ class FaceTracker:
         self.face_data = {}  # face_key -> face tracking info
         self.frame_count = 0
         
+        # Fixed interval averaging
+        self.current_period_start = time.time()
+        self.current_period_embeddings = {}  # face_key -> list of embeddings for current period
+        
         # Timing
         self.last_cleanup = time.time()
         self.cleanup_interval = 5.0  # seconds
     
     
     def update_face_data(self, face_key, face, current_time):
-        """Update face data with new detection for embedding averaging"""
+        """Update face data with fixed 1-second interval averaging"""
+        # Initialize face data if not exists
         if face_key not in self.face_data:
             self.face_data[face_key] = {
-                'embeddings': deque(),
-                'timestamps': deque(),
                 'avg_embedding': None,
                 'avg_norm': None,
                 'last_seen': current_time
@@ -134,45 +138,64 @@ class FaceTracker:
         
         face_info = self.face_data[face_key]
         
-        # Add new embedding if available
+        # Add new embedding to current period collection if available
         if hasattr(face, 'embedding') and face.embedding is not None:
             # Ensure embedding is float32 for consistency
             embedding = face.embedding.copy()
             if hasattr(embedding, 'dtype') and hasattr(embedding, 'astype'):
                 embedding = embedding.astype(np.float32)
             
-            face_info['embeddings'].append(embedding)
-            face_info['timestamps'].append(current_time)
+            # Initialize current period collection for this face if not exists
+            if face_key not in self.current_period_embeddings:
+                self.current_period_embeddings[face_key] = []
             
-            # Remove old embeddings outside the window
-            cutoff_time = current_time - self.avg_window_seconds
-            while (face_info['timestamps'] and 
-                   face_info['timestamps'][0] < cutoff_time):
-                face_info['embeddings'].popleft()
-                face_info['timestamps'].popleft()
-            
-            # Calculate average embedding
-            if face_info['embeddings']:
-                embeddings_array = np.array(list(face_info['embeddings']), dtype=np.float32)
-                face_info['avg_embedding'] = np.mean(embeddings_array, axis=0).astype(np.float32)
-                face_info['avg_norm'] = l2norm(face_info['avg_embedding'])
+            # Add embedding to current period
+            self.current_period_embeddings[face_key].append(embedding)
         
         # Update timestamp
         face_info['last_seen'] = current_time
     
+    def check_and_update_averages(self, current_time):
+        """Check if 1 second has passed and update averages"""
+        if current_time - self.current_period_start >= self.avg_window_seconds:
+            # Count faces before we reset
+            num_faces = len(self.current_period_embeddings)
+            
+            # Calculate averages for all faces that had embeddings in this period
+            for face_key, embeddings in self.current_period_embeddings.items():
+                if embeddings and face_key in self.face_data:
+                    # Calculate average embedding for this 1-second period
+                    embeddings_array = np.array(embeddings, dtype=np.float32)
+                    avg_embedding = np.mean(embeddings_array, axis=0).astype(np.float32)
+                    avg_norm = l2norm(avg_embedding)
+                    
+                    # Update stored averages
+                    self.face_data[face_key]['avg_embedding'] = avg_embedding
+                    self.face_data[face_key]['avg_norm'] = avg_norm
+            
+            # Start new 1-second period
+            self.current_period_start = current_time
+            self.current_period_embeddings = {}
+            
+            if num_faces > 0:
+                print(f"Updated averages for {num_faces} faces (1-second period completed)")
+    
     def track_faces(self, faces):
-        """Apply 1-second embedding averaging to detected faces"""
+        """Apply fixed 1-second interval embedding averaging to detected faces"""
         current_time = time.time()
         self.frame_count += 1
         
-        # For each detected face, simply apply 1-second averaging
+        # Check if 1 second has passed and update averages if needed
+        self.check_and_update_averages(current_time)
+        
+        # For each detected face, collect embeddings for current period
         tracked_faces = []
         
         for i, face in enumerate(faces):
             # Use face index as simple identifier for this frame
             face_key = f"face_{i}"
             
-            # Update face data (without persistent ID tracking)
+            # Update face data for current period
             self.update_face_data(face_key, face, current_time)
             
             # Create tracked face object
@@ -180,7 +203,7 @@ class FaceTracker:
             for key, value in face.__dict__.items():
                 setattr(tracked_face, key, value)
             
-            # Add averaged embedding data if available
+            # Add averaged embedding data if available (from previous completed period)
             face_info = self.face_data.get(face_key)
             if face_info and face_info['avg_embedding'] is not None:
                 # Ensure averaged embeddings are float32
@@ -435,9 +458,9 @@ try:
     app = FaceAnalysis(allowed_modules=ALLOWED_MODULES, providers=PROVIDERS)
     app.prepare(ctx_id=0, det_size=DETECTION_SIZE)
     
-    # Initialize face tracker for 1-second embedding averaging
+    # Initialize face tracker for fixed 1-second interval embedding averaging
     face_tracker = FaceTracker(avg_window_seconds=1.0, similarity_threshold=0.6, max_missing_frames=30)
-    print("Embedding averaging system initialized with 1-second window")
+    print("Fixed interval embedding averaging system initialized (updates every 1 second)")
     
 except Exception as e:
     print(f"CRITICAL ERROR: System initialization failed - {e}")
@@ -450,7 +473,7 @@ if __name__ == "__main__":
         print("AI SURVEILLANCE CAMERA - EMBEDDING AVERAGING SYSTEM")
         print("="*60)
         print(f"✓ Models loaded: {list(app.models.keys())}")
-        print(f"✓ 1-second embedding averaging for stable measurements")
+        print(f"✓ Fixed 1-second interval embedding averaging (updates every 1s)")
         print(f"✓ Real-time display of age, gender, and other parameters")
         print(f"✓ Real-time FPS monitoring")
         print(f"✓ Enhanced face detection with attributes")
@@ -505,12 +528,12 @@ if __name__ == "__main__":
                 cv2.putText(frame_out, fps_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 
                 # Show frame with updated title
-                cv2.imshow("AI Surveillance - 1s Avg Embeddings", frame_out)
+                cv2.imshow("AI Surveillance - Fixed 1s Avg (Updates Every 1s)", frame_out)
                 
             except Exception as e:
                 print(f"ERROR: Frame processing failed - {e}")
                 frame_out = frame
-                cv2.imshow("AI Surveillance - 1s Avg Embeddings", frame_out)
+                cv2.imshow("AI Surveillance - Fixed 1s Avg (Updates Every 1s)", frame_out)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
