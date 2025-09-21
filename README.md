@@ -30,7 +30,8 @@ A real-time face detection and analysis system with 2-second embedding averaging
 - **Comparison Display**: Shows both instant and averaged embedding values
 
 ### Technical Features
-- **Cached Properties**: Optimized embedding norm calculations
+- **Float32 Enforcement**: All embeddings forced to float32 for consistency and performance
+- **Cached Properties**: Optimized embedding norm calculations  
 - **Time-based Buffers**: Efficient sliding window for embedding averaging
 - **Model Validation**: Automatic model loading with error handling
 - **Configurable Parameters**: Adjustable detection thresholds and window sizes
@@ -277,6 +278,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - ✅ Robust error handling and recovery
 - ✅ Memory management and cleanup
 - ✅ Multiple model support (buffalo series)
+- ✅ Float32 embedding enforcement (prevents ONNX float64 issues)
 
 ---
 

@@ -9,7 +9,7 @@ from collections import defaultdict, deque
 from numpy.linalg import norm as l2norm
 
 # Hardcoded Constants
-MODEL_NAME = 'buffalo_m'  # Recommended starting model - balanced speed/accuracy
+MODEL_NAME = 'buffalo_l'  # Recommended starting model - balanced speed/accuracy
 MODEL_DIR = 'models'
 MODEL_PATH = os.path.join(MODEL_DIR, MODEL_NAME)
 
@@ -28,7 +28,12 @@ DETECTION_SIZE = (640, 640)
 
 
 class Face(dict):
-    """Face detection result with embedding support"""
+    """Face detection result with embedding support
+    
+    Improvements:
+    - Enforces float32 for all embeddings to ensure consistency
+    - Prevents ONNX models from outputting float64 which affects calculations
+    """
     
     def __init__(self, d=None, **kwargs):
         if d is None:
@@ -44,9 +49,12 @@ class Face(dict):
         elif isinstance(value, dict) and not isinstance(value, self.__class__):
             value = self.__class__(value)
         
-        # Reset cached properties when embedding changes
-        if name == 'embedding':
+        # Reset cached properties and enforce float32 for embeddings
+        if name == 'embedding' and value is not None:
             self._reset_cached_properties()
+            # Force float32 for embeddings to ensure consistency
+            if hasattr(value, 'dtype') and hasattr(value, 'astype'):
+                value = value.astype(np.float32)
         
         super(Face, self).__setattr__(name, value)
         super(Face, self).__setitem__(name, value)
@@ -71,9 +79,9 @@ class Face(dict):
         if not hasattr(self, '_normed_embedding') or self._normed_embedding is None:
             norm = self.embedding_norm
             if norm > 0:
-                self._normed_embedding = self.embedding / norm
+                self._normed_embedding = (self.embedding / norm).astype(np.float32)
             else:
-                self._normed_embedding = self.embedding
+                self._normed_embedding = self.embedding.astype(np.float32)
         return self._normed_embedding
     
     def _reset_cached_properties(self):
@@ -91,9 +99,15 @@ class Face(dict):
 
 
 class FaceTracker:
-    """Face embedding averaging system for 2-second windows"""
+    """Face embedding averaging system for 1-second windows
     
-    def __init__(self, avg_window_seconds=2.0, similarity_threshold=0.6, max_missing_frames=30):
+    Improvements:
+    - Forces float32 for all embeddings to prevent ONNX float64 issues
+    - Uses 1-second averaging window for stable but responsive embeddings
+    - Real-time display of other parameters (age, gender)
+    """
+    
+    def __init__(self, avg_window_seconds=1.0, similarity_threshold=0.6, max_missing_frames=30):
         self.avg_window_seconds = avg_window_seconds
         self.similarity_threshold = similarity_threshold  # Kept for compatibility but not used
         self.max_missing_frames = max_missing_frames  # Kept for compatibility but not used
@@ -122,7 +136,12 @@ class FaceTracker:
         
         # Add new embedding if available
         if hasattr(face, 'embedding') and face.embedding is not None:
-            face_info['embeddings'].append(face.embedding.copy())
+            # Ensure embedding is float32 for consistency
+            embedding = face.embedding.copy()
+            if hasattr(embedding, 'dtype') and hasattr(embedding, 'astype'):
+                embedding = embedding.astype(np.float32)
+            
+            face_info['embeddings'].append(embedding)
             face_info['timestamps'].append(current_time)
             
             # Remove old embeddings outside the window
@@ -134,19 +153,19 @@ class FaceTracker:
             
             # Calculate average embedding
             if face_info['embeddings']:
-                embeddings_array = np.array(list(face_info['embeddings']))
-                face_info['avg_embedding'] = np.mean(embeddings_array, axis=0)
+                embeddings_array = np.array(list(face_info['embeddings']), dtype=np.float32)
+                face_info['avg_embedding'] = np.mean(embeddings_array, axis=0).astype(np.float32)
                 face_info['avg_norm'] = l2norm(face_info['avg_embedding'])
         
         # Update timestamp
         face_info['last_seen'] = current_time
     
     def track_faces(self, faces):
-        """Apply 2-second embedding averaging to detected faces"""
+        """Apply 1-second embedding averaging to detected faces"""
         current_time = time.time()
         self.frame_count += 1
         
-        # For each detected face, simply apply 2-second averaging
+        # For each detected face, simply apply 1-second averaging
         tracked_faces = []
         
         for i, face in enumerate(faces):
@@ -164,7 +183,8 @@ class FaceTracker:
             # Add averaged embedding data if available
             face_info = self.face_data.get(face_key)
             if face_info and face_info['avg_embedding'] is not None:
-                tracked_face.avg_embedding = face_info['avg_embedding']
+                # Ensure averaged embeddings are float32
+                tracked_face.avg_embedding = face_info['avg_embedding'].astype(np.float32)
                 tracked_face.avg_embedding_norm = face_info['avg_norm']
             
             tracked_faces.append(tracked_face)
@@ -178,7 +198,7 @@ class FaceTracker:
     
     def cleanup_old_faces(self, current_time):
         """Remove old face data to prevent memory leaks"""
-        cutoff_time = current_time - (self.avg_window_seconds * 3)  # Keep 3x window for safety
+        cutoff_time = current_time - (self.avg_window_seconds * 5)  # Keep 5x window for safety (5 seconds for 1s window)
         
         faces_to_remove = []
         for face_key, face_info in self.face_data.items():
@@ -350,7 +370,7 @@ class FaceAnalysis:
             return []
 
     def draw_on(self, img, faces):
-        """Draw detection results on image with averaged embeddings"""
+        """Draw detection results on image with real-time parameters and 1-second averaged embeddings"""
         try:
             if img is None:
                 raise ValueError("Input image is None")
@@ -374,28 +394,30 @@ class FaceAnalysis:
                             kp_color = (0, 255, 0) if l in [0, 3] else (0, 0, 255)
                             cv2.circle(dimg, (kps[l][0], kps[l][1]), 1, kp_color, 2)
                     
-                    # Draw age and gender
+                    # Draw real-time age and gender (not averaged)
                     if face.gender is not None and face.age is not None:
                         gender = "Male" if face.gender == 1 else "Female"
                         text = f"{gender}, {int(face.age)}"
                         cv2.putText(dimg, text, (box[0], box[1] - 10), 
                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
                     
-                    # Draw embedding info (averaged over 2 seconds)
+                    # Draw embedding info
                     y_offset = box[3] + 20
+                    font_size = 0.4
+                    font_thickness = 1
                     
-                    # Show averaged embedding norm if available
-                    if hasattr(face, 'avg_embedding_norm') and face.avg_embedding_norm is not None:
-                        avg_norm_text = f"Avg Emb: {face.avg_embedding_norm:.3f}"
-                        cv2.putText(dimg, avg_norm_text, (box[0], y_offset), 
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
-                        y_offset += 15
-                    
-                    # Show instant embedding norm for comparison (in smaller text)
+                    # Show instant embedding norm first
                     if hasattr(face, 'embedding') and face.embedding is not None:
                         inst_norm = f"Inst: {face.embedding_norm:.3f}" if face.embedding_norm else "Inst: N/A"
                         cv2.putText(dimg, inst_norm, (box[0], y_offset), 
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.4, (128, 128, 128), 1)
+                                  cv2.FONT_HERSHEY_SIMPLEX, font_size, (128, 128, 128), font_thickness)
+                        y_offset += 15
+                    
+                    # Show 1-second averaged embedding norm below (same font size)
+                    if hasattr(face, 'avg_embedding_norm') and face.avg_embedding_norm is not None:
+                        avg_norm_text = f"1s Avg: {face.avg_embedding_norm:.3f}"
+                        cv2.putText(dimg, avg_norm_text, (box[0], y_offset), 
+                                  cv2.FONT_HERSHEY_SIMPLEX, font_size, (255, 255, 0), font_thickness)
                         
                 except Exception as e:
                     print(f"WARNING: Failed to draw face {i} - {e}")
@@ -413,9 +435,9 @@ try:
     app = FaceAnalysis(allowed_modules=ALLOWED_MODULES, providers=PROVIDERS)
     app.prepare(ctx_id=0, det_size=DETECTION_SIZE)
     
-    # Initialize face tracker for 2-second embedding averaging
-    face_tracker = FaceTracker(avg_window_seconds=2.0, similarity_threshold=0.6, max_missing_frames=30)
-    print("Embedding averaging system initialized with 2-second window")
+    # Initialize face tracker for 1-second embedding averaging
+    face_tracker = FaceTracker(avg_window_seconds=1.0, similarity_threshold=0.6, max_missing_frames=30)
+    print("Embedding averaging system initialized with 1-second window")
     
 except Exception as e:
     print(f"CRITICAL ERROR: System initialization failed - {e}")
@@ -428,7 +450,8 @@ if __name__ == "__main__":
         print("AI SURVEILLANCE CAMERA - EMBEDDING AVERAGING SYSTEM")
         print("="*60)
         print(f"✓ Models loaded: {list(app.models.keys())}")
-        print(f"✓ 2-second embedding averaging for stable measurements")
+        print(f"✓ 1-second embedding averaging for stable measurements")
+        print(f"✓ Real-time display of age, gender, and other parameters")
         print(f"✓ Real-time FPS monitoring")
         print(f"✓ Enhanced face detection with attributes")
         print("="*60)
@@ -471,10 +494,10 @@ if __name__ == "__main__":
                 # Detect faces
                 detected_faces = app.get(frame)
                 
-                # Track faces with 2-second averaged embeddings
+                # Track faces with 1-second averaged embeddings
                 tracked_faces = face_tracker.track_faces(detected_faces)
                 
-                # Draw results with averaged embeddings
+                # Draw results with real-time parameters and 1-second averaged embeddings
                 frame_out = app.draw_on(frame, tracked_faces)
                 
                 # Add FPS overlay
@@ -482,12 +505,12 @@ if __name__ == "__main__":
                 cv2.putText(frame_out, fps_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 
                 # Show frame with updated title
-                cv2.imshow("AI Surveillance - 2s Averaged Embeddings", frame_out)
+                cv2.imshow("AI Surveillance - 1s Avg Embeddings", frame_out)
                 
             except Exception as e:
                 print(f"ERROR: Frame processing failed - {e}")
                 frame_out = frame
-                cv2.imshow("AI Surveillance - 2s Averaged Embeddings", frame_out)
+                cv2.imshow("AI Surveillance - 1s Avg Embeddings", frame_out)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
