@@ -1,33 +1,11 @@
-# Core dependencies for AI Surveillance Camera v1.0
-# Tested on Python 3.8, CUDA 12.6, cuDNN v9.13, TensorRT 10.3 GA
-
-# Face detection and analysis
-insightface>=0.7.3
-
-# Computer vision
 opencv-python>=4.8.0
-
-# Numerical computing
 numpy>=1.21.0
+insightface>=0.7.3
+PyQt5>=5.15.0
 
-# ONNX Runtime - Choose one based on your hardware:
-# For CPU only:
-onnxruntime>=1.15.0
+# GPU Acceleration (use onnxruntime-gpu for NVIDIA GPUs)
+onnxruntime-gpu==1.20.0
 
-# For GPU acceleration (CUDA), replace onnxruntime with:
-# onnxruntime-gpu>=1.15.0
-
-# Optional: TensorRT support for NVIDIA GPUs
-# Requires TensorRT to be installed separately
-# onnxruntime-tensorrt>=1.15.0
-
-# PyTorch for GPU acceleration (optional):
-# For CUDA 12.6 (tested configuration):
+# PyTorch for GPU acceleration (CUDA 12.6)
+# Install separately:
 # pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126
-
-# System dependencies (usually pre-installed)
-# If you encounter issues, you may need:
-# pillow>=8.0.0
-# scikit-image>=0.19.0
-
-# Note: No guarantee of working in case of version mismatch

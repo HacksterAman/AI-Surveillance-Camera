@@ -1,65 +1,62 @@
-# AI Surveillance Camera v1.0
+# AI Surveillance Camera - High Precision Face Detection
 
-A real-time face detection and analysis system with 2-second embedding averaging for stable measurements. Built with InsightFace, OpenCV, and ONNX Runtime with optional TensorRT acceleration.
+Real-time face detection and analysis with high-precision embeddings optimized for face recognition. Features float64 precision, multiple model support, and modern PyQt5 interface. Built with InsightFace, OpenCV, and ONNX Runtime.
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![OpenCV](https://img.shields.io/badge/OpenCV-4.8+-green.svg)
 ![InsightFace](https://img.shields.io/badge/InsightFace-0.7.3+-red.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-## 🎯 Features (v1.0)
+## Features
+
+### High-Precision Embeddings
+- **Float64 Precision**: Double precision for all embedding calculations
+- **FP32 TensorRT Inference**: FP16 disabled to prevent quantization errors
+- **Welford's Algorithm**: Numerically stable averaging
+- **NaN/Inf Validation**: Automatic detection and filtering
+- **Epsilon Safeguards**: Prevents division by zero (ε = 1e-12)
+
+### Face Recognition
+- **Cosine Similarity Matching**: Built-in face comparison
+- **Stable Embeddings**: 1-second interval averaging with high precision
+- **Quality Validation**: Embedding quality checks and metrics
+- **Ready for Production**: Optimized for real-world systems
 
 ### Core Functionality
-- **Real-time Face Detection**: High-accuracy face detection using InsightFace models
-- **Age & Gender Prediction**: Automatic demographic analysis for detected faces
-- **Face Embedding Extraction**: 512-dimensional face embeddings for identity analysis
-- **2-Second Embedding Averaging**: Stable measurements using time-windowed averaging
-- **Multiple Model Support**: Detection, recognition, and demographic analysis models
+- **Real-time Face Detection**: High-accuracy detection using InsightFace models
+- **Age & Gender Prediction**: Automatic demographic analysis
+- **Face Embedding Extraction**: 512-dimensional embeddings with float64 precision
+- **Multiple Model Support**: Speed, Balance, and Accuracy modes
+- **Model Switching**: Dynamic model selection via GUI slider
 
-### Performance & Optimization  
-- **TensorRT Acceleration**: GPU-accelerated inference for NVIDIA hardware
-- **Multi-Provider Support**: ONNX Runtime with CPU, CUDA, and TensorRT providers
-- **Real-time FPS Monitoring**: Live performance metrics display
-- **Memory Management**: Automatic cleanup of old embedding data
-- **Error Recovery**: Robust error handling with graceful degradation
+### Performance
+- **TensorRT Acceleration**: GPU-accelerated FP32 inference
+- **Multi-Provider Support**: ONNX Runtime with CPU, CUDA, and TensorRT
+- **Real-time FPS Monitoring**: Live performance metrics
+- **Memory Management**: Automatic cleanup of old data
+- **Error Recovery**: Robust error handling
 
-### User Interface
-- **Live Video Feed**: Real-time webcam processing with overlay information
-- **Visual Overlays**: Bounding boxes, age/gender labels, embedding metrics
-- **Performance Metrics**: FPS counter and active face count
-- **Comparison Display**: Shows both instant and averaged embedding values
-
-### Technical Features
-- **Float32 Enforcement**: All embeddings forced to float32 for consistency and performance
-- **Cached Properties**: Optimized embedding norm calculations  
-- **Time-based Buffers**: Efficient sliding window for embedding averaging
-- **Model Validation**: Automatic model loading with error handling
-- **Configurable Parameters**: Adjustable detection thresholds and window sizes
-
-## 📋 Requirements
+## Requirements
 
 ### Tested Configuration
-This project has been tested and verified on the following configuration:
 - **Python**: 3.8
 - **CUDA**: 12.6
 - **cuDNN**: v9.13
 - **TensorRT**: 10.3 GA
-- **Operating System**: Windows
+- **OS**: Windows
 
-⚠️ **Version Compatibility**: No guarantee of working in case of version mismatch. For best results, use similar versions.
+⚠️ **Note**: For best results, use similar versions.
 
-### General Requirements
-- **Python**: 3.8 or higher
-- **Operating System**: Windows, Linux, or macOS
-- **Hardware**: 
-  - CPU: Modern multi-core processor
-  - RAM: 4GB minimum, 8GB recommended
-  - GPU: NVIDIA GPU with CUDA support (optional, for acceleration)
+### Hardware
+- **CPU**: Modern multi-core processor
+- **RAM**: 4GB minimum, 8GB recommended
+- **GPU**: NVIDIA GPU with CUDA support (recommended)
+  - Tested: GTX 1650 Ti with CUDA 12.6, cuDNN v9.13, TensorRT 10.3 GA
 - **Webcam**: USB or built-in camera
 
-## 🚀 Quick Start
+## Quick Start
 
-### 1. Clone the Repository
+### 1. Clone Repository
 ```bash
 git clone https://github.com/yourusername/ai-surveillance-camera.git
 cd ai-surveillance-camera
@@ -81,207 +78,188 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3b. Install PyTorch for GPU Acceleration (Optional)
-For CUDA 12.6 support (tested configuration):
+### 3b. Install PyTorch for GPU (CUDA 12.6)
 ```bash
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 ```
+*Note: Adjust CUDA version as needed. Skip if using CPU only.*
 
-⚠️ **Note**: This command is for CUDA 12.6. Adjust the URL for different CUDA versions or use CPU-only version if no GPU available.
-
-### 4. Download InsightFace Models
-
-#### Automatic Setup (Recommended)
-Use the included setup script for easy model installation:
-
+### 4. Download Models
 ```bash
 python setup.py
 ```
 
-This interactive script will:
-- Download your chosen model (buffalo_s, buffalo_m, or buffalo_l)
-- Configure the system automatically  
-- Verify everything is working
+Downloads 2 buffalo models (~120MB):
+- **buffalo_s**: Speed mode (fast processing, 20MB)
+- **buffalo_l**: Accuracy mode (best accuracy, 100MB)
 
-#### Model Files and Their Purposes
-When downloaded, the models directory will contain these ONNX files:
+### 5. Run Application
 
-```
-models/
-└── buffalo_l/  (example)
-    ├── det_10g.onnx          # Face detection (primary detector)
-    ├── genderage.onnx        # Age (0-100) and gender prediction (0=female, 1=male)
-    ├── w600k_r50.onnx        # Face recognition embeddings (512-dim vectors)
-    ├── 1k3d68.onnx           # 3D face alignment (68 landmarks)
-    └── 2d106det.onnx         # Detailed facial landmark detection (106 points)
+**PyQt5 GUI (Recommended)**
+```bash
+python gui_app_qt.py
 ```
 
-**Why `.gitkeep`?** The `models/.gitkeep` file ensures the models directory is tracked in git, even when empty, so the setup script knows where to place downloaded models.
-
-### 5. Run the Application
+**Terminal Version**
 ```bash
 python test.py
 ```
 
-The system will use the model configured by `setup.py`. To change models, simply run `python setup.py` again and select a different option.
+## PyQt5 GUI Features
 
-## 🎮 Usage
+### Modern Interface
+- Beautiful gradient UI with smooth animations
+- Professional dark theme
+- Rich HTML-formatted embeddings display
+- Anti-aliased rendering
 
-### Basic Controls
-- **Start**: Run `python test.py`
-- **Quit**: Press `q` key in the video window
-- **Camera**: The system will try webcam index 1, then 0 if unavailable
-
-### Display Elements
-- **Red Bounding Boxes**: Detected face regions
-- **Cyan Text**: Age and gender information
-- **Yellow Text**: Averaged embedding norm (2-second window)
-- **Gray Text**: Instant embedding norm (for comparison)
-- **White Text**: FPS and face count (top-left corner)
-
-### Understanding the Output
-```
-FPS: 25.3 | Faces: 2          # Performance metrics
-Female, 28                     # Age and gender prediction
-Avg Emb: 12.543               # 2-second averaged embedding norm
-Inst: 12.891                  # Instant embedding norm
-```
-
-## ⚙️ Configuration
+### Controls
+- **Model Button**: Toggle between Speed/Accuracy
+- **Precision Toggle**: Switch between float32/float64
+- **Camera Switch**: Cycle through available cameras
+- **Real-time Stats**: FPS, face count, model status
 
 ### Model Selection
-Use the setup script to change models:
-```bash
-python setup.py
-```
-Then choose from:
-- `buffalo_s`: Faster, good accuracy (35+ FPS on GTX 1650 Ti)
-- `buffalo_m`: Balanced performance (30+ FPS on GTX 1650 Ti)  
-- `buffalo_l`: Best accuracy (24+ FPS on GTX 1650 Ti)
+
+Click button to toggle between:
+- **Speed**: buffalo_s, float32, ~32 FPS (Orange)
+- **Accuracy**: buffalo_l, float64, ~22 FPS (Green)
+
+### Display Elements
+- **Green Bounding Boxes**: Detected faces
+- **Cyan Text**: Age and gender
+- **Top Stats Bar**: FPS, face count, model, precision
+- **Right Panel**: Face embeddings (raw, normalized, averaged)
+
+## Terminal Version
+
+### Controls
+- Press **q**: Quit application
+- Press **h**: Toggle precision mode (float64 ↔ float32)
+
+### Display
+- Red bounding boxes around faces
+- Cyan text: Age and gender
+- Yellow text: 1s averaged embedding norm
+- Gray text: Instant embedding norm
+- White text: FPS and face count
+
+## Configuration
+
+### Model Selection
+| Model | Speed | Accuracy | Size | FPS (GTX 1650 Ti) |
+|-------|-------|----------|------|-------------------|
+| buffalo_s | Fast | Good | 20MB | 35+ |
+| buffalo_l | Slow | Best | 100MB | 24+ |
 
 ### Detection Parameters
 ```python
 DETECTION_SIZE = (640, 640)  # Input resolution
-det_thresh = 0.5            # Detection confidence threshold
+det_thresh = 0.5             # Detection threshold
+avg_window_seconds = 1.0     # Embedding averaging window
 ```
 
-### Averaging Window
+### Precision Settings
 ```python
-avg_window_seconds = 2.0    # Embedding averaging window
-cleanup_interval = 5.0      # Memory cleanup interval
+EMBEDDING_DTYPE = np.float64  # Double precision
+EPSILON = 1e-12               # Numerical stability
 ```
 
-### Hardware Acceleration
-For GPU acceleration, install CUDA-compatible ONNX Runtime:
-```bash
-pip uninstall onnxruntime
-pip install onnxruntime-gpu
-```
-
-**Tested GPU Configuration**:
-- NVIDIA GPU with CUDA 12.6, cuDNN v9.13, TensorRT 10.3 GA
-- For optimal performance, ensure your system matches these versions
-
-## 🔧 Troubleshooting
-
-### Common Issues
+## Troubleshooting
 
 **"No ONNX models found"**
-- Ensure models are in `./models/buffalo_m/` directory
-- Check file names match expected ONNX files
-- Try re-downloading the model pack
+- Run `python setup.py` to download models
+- Check models directory exists
 
 **"Could not open webcam"**
 - Check webcam permissions
-- Try different camera indices (0, 1, 2)
-- Ensure no other applications are using the camera
+- Try different camera indices
+- Close other apps using camera
 
-**Low FPS Performance**
-- **Switch to smaller model**: Run `python setup.py` and choose buffalo_m or buffalo_s
-- Reduce `DETECTION_SIZE` to (320, 320)
-- Install GPU-accelerated ONNX Runtime
-- Close unnecessary applications
-- **Reference**: GTX 1650 Ti achieves 24+ FPS with buffalo_l
+**Low FPS**
+- Switch to Speed model via slider
+- Reduce DETECTION_SIZE to (320, 320)
+- Install onnxruntime-gpu for GPU acceleration
 
 **"TensorRT Provider not available"**
 - Install NVIDIA TensorRT separately
-- Use CUDA provider instead: modify `PROVIDERS` in code
-- Fallback to CPU provider for compatibility
+- Use CUDA provider instead
+- Fallback to CPU provider
 
-**Version Compatibility Issues**
-- This project was tested on Python 3.8, CUDA 12.6, cuDNN v9.13, TensorRT 10.3 GA
-- For different versions: try CPU-only mode first
-- Check ONNX Runtime compatibility with your CUDA version
-- Consider using virtual environment to avoid conflicts
+## Model Comparison
 
-### Performance Optimization
+| Feature | Speed | Accuracy |
+|---------|-------|----------|
+| Model | buffalo_s | buffalo_l |
+| Precision | float32 | float64 |
+| FPS | ~32 | ~22 |
+| Size | 20MB | 100MB |
+| Use Case | Real-time | Recognition |
 
-1. **Model Selection**: Run `python setup.py` to choose the right model for your hardware
-   - GTX 1650 Ti: buffalo_l (24+ FPS), buffalo_m (30+ FPS), buffalo_s (35+ FPS)
-   - Lower-end GPUs: buffalo_s recommended
-   - CPU-only: buffalo_s strongly recommended
+## Face Recognition Example
 
-2. **GPU Acceleration**: Install `onnxruntime-gpu` and ensure CUDA is available
-3. **Resolution**: Lower `DETECTION_SIZE` for better performance  
-4. **TensorRT**: Enable TensorRT provider for NVIDIA GPUs
-
-### Debug Mode
-Enable verbose logging by uncommenting debug prints in the code:
 ```python
-print(f"DEBUG: Processing frame {frame_count}")
-print(f"DEBUG: Detected {len(faces)} faces")
+from gui_app_qt import Face
+
+# Compare two faces
+similarity = face1.compute_similarity(face2)
+if similarity > 0.6:
+    print("Same person")
+
+# Access embeddings
+instant = face.embedding       # Current frame
+averaged = face.avg_embedding  # 1s average
+normed = face.normed_embedding # Normalized
 ```
 
-## 📊 Model Comparison
+## Performance Tips
 
-| Model | Speed | Accuracy | Model Size | FPS (GTX 1650 Ti) | Use Case |
-|-------|--------|----------|------------|-------------------|----------|
-| buffalo_s | Fast | Good | ~20MB | 35+ FPS | Real-time applications, lower-end hardware |
-| buffalo_m | Medium | Better | ~50MB | 30+ FPS | Balanced performance, recommended default |
-| buffalo_l | Slow | Best | ~100MB | **24+ FPS** | High-accuracy, tested configuration |
+1. **Model Selection**: Use slider to find optimal model
+   - Speed: Real-time monitoring
+   - Balance: General use
+   - Accuracy: Face recognition
 
-**Performance Note**: Testing on GTX 1650 Ti shows buffalo_l achieves 24+ FPS. For better performance on lower-end hardware, switch to buffalo_m or buffalo_s models.
+2. **Precision Toggle**: 
+   - float64: Best for face matching
+   - float32: Faster processing
 
-**Hardware Scaling**: 
-- Modern GPUs (RTX 30/40 series): All models run smoothly
-- Mid-range GPUs (GTX 1650-1660): buffalo_l works well, buffalo_m recommended
-- Older/Lower-end GPUs: Use buffalo_s for best performance
-- CPU-only: buffalo_s strongly recommended
+3. **GPU Acceleration**: Install onnxruntime-gpu
 
-## 🤝 Contributing
+4. **Resolution**: Lower DETECTION_SIZE for speed
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Commit changes: `git commit -am 'Add feature'`
-4. Push to branch: `git push origin feature-name`
-5. Submit a pull request
+## Contributing
 
-## 📝 License
+1. Fork repository
+2. Create feature branch
+3. Commit changes
+4. Push to branch
+5. Submit pull request
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## License
 
-## 🙏 Acknowledgments
+MIT License - see LICENSE file
 
-- [InsightFace](https://github.com/deepinsight/insightface) - Face analysis models and framework
+## Acknowledgments
+
+- [InsightFace](https://github.com/deepinsight/insightface) - Face analysis models
 - [OpenCV](https://opencv.org/) - Computer vision library
-- [ONNX Runtime](https://onnxruntime.ai/) - High-performance inference engine
+- [ONNX Runtime](https://onnxruntime.ai/) - Inference engine
 - [NVIDIA TensorRT](https://developer.nvidia.com/tensorrt) - GPU acceleration
 
-## 📈 Version History
+## Version History
 
-### v1.0.0 (Current)
-- ✅ Real-time face detection and analysis
-- ✅ Age and gender prediction
-- ✅ 2-second embedding averaging system
-- ✅ TensorRT acceleration support
-- ✅ FPS monitoring and performance metrics
-- ✅ Robust error handling and recovery
-- ✅ Memory management and cleanup
-- ✅ Multiple model support (buffalo series)
-- ✅ Float32 embedding enforcement (prevents ONNX float64 issues)
+### Current
+- Float64 precision embeddings
+- Three model support (Speed/Balance/Accuracy)
+- PyQt5 modern GUI with model selector slider
+- Runtime precision toggle
+- Welford's algorithm for stable averaging
+- NaN/Inf validation
+- Cosine similarity matching
+- 1-second embedding averaging
 
 ---
 
-**Built with ❤️ for computer vision and AI surveillance applications**
+**Built for computer vision and AI surveillance applications**
 
-For questions, issues, or feature requests, please open an issue on GitHub.
+For questions or issues, open an issue on GitHub.

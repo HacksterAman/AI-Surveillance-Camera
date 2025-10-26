@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-AI Surveillance Camera v1.0 Setup Script
-This script helps users download and set up InsightFace models automatically.
-"""
-
 import os
 import sys
 from pathlib import Path
@@ -12,126 +7,147 @@ try:
     import insightface
     from insightface.app import FaceAnalysis
 except ImportError:
-    print("Error: InsightFace not installed. Please run 'pip install -r requirements.txt' first.")
+    print("Error: InsightFace not installed")
+    print("Run: pip install -r requirements.txt")
     sys.exit(1)
 
-def setup_models():
-    """Download and setup InsightFace models"""
-    print("AI Surveillance Camera v1.0 - Model Setup")
-    print("=" * 50)
+def setup_models(auto_yes=False):
+    print("=" * 70)
+    print("AI Surveillance Camera - Model Setup")
+    print("=" * 70)
     
     models_dir = Path("models")
     models_dir.mkdir(exist_ok=True)
     
-    # Available models
-    available_models = {
-        'buffalo_s': 'Fast, good accuracy - recommended for real-time',
-        'buffalo_m': 'Balanced speed/accuracy - recommended for most users', 
-        'buffalo_l': 'Slow, best accuracy - for high-accuracy requirements'
+    models = {
+        'buffalo_s': 'Speed',
+        'buffalo_l': 'Accuracy'
     }
     
-    print("\nAvailable InsightFace models:")
-    for model, description in available_models.items():
-        print(f"  {model}: {description}")
+    existing = []
+    for name in models.keys():
+        model_path = models_dir / name
+        if model_path.exists() and any(model_path.glob("*.onnx")):
+            existing.append(name)
     
-    # Get user choice
-    print(f"\nCurrent default model: buffalo_m")
-    choice = input("Enter model name to download (or press Enter for buffalo_m): ").strip()
-    
-    if not choice:
-        choice = 'buffalo_m'
-    
-    if choice not in available_models:
-        print(f"Error: Invalid model '{choice}'. Please choose from: {list(available_models.keys())}")
-        return False
-    
-    print(f"\nDownloading {choice} model...")
-    
-    try:
-        # Initialize FaceAnalysis - this will download the model
-        app = FaceAnalysis(name=choice)
-        app.prepare(ctx_id=0, det_size=(640, 640))
-        
-        print(f"✓ Successfully downloaded and verified {choice} model")
-        print(f"✓ Model is ready for use")
-        
-        # Update the main script if user chose a different model
-        if choice != 'buffalo_m':
-            update_main_script(choice)
-            
+    if len(existing) == 2:
+        print("\nBoth models already exist:")
+        for name in models.keys():
+            print(f"  * {name} - {models[name]}")
+        print("\nSetup complete!")
         return True
+    
+    print(f"\nDownloading {2 - len(existing)} models to 'models/' folder:")
+    for name, desc in models.items():
+        if name not in existing:
+            print(f"  * {name} - {desc}")
+    
+    print(f"\nSize: ~{(2 - len(existing)) * 60} MB")
+    print("=" * 70)
+    
+    if not auto_yes:
+        try:
+            proceed = input("\nContinue? (y/n): ").strip().lower()
+            if proceed not in ['y', 'yes']:
+                return False
+        except EOFError:
+            print("\nAuto-continuing (non-interactive mode)...")
+    else:
+        print("\nAuto-continuing (--yes flag)...")
+    
+    print()
+    success = 0
+    
+    for i, (name, desc) in enumerate(models.items(), 1):
+        print(f"[{i}/2] {name}...", end=" ")
         
-    except Exception as e:
-        print(f"Error downloading model: {e}")
-        print("Please check your internet connection and try again.")
+        try:
+            model_path = models_dir / name
+            if model_path.exists() and any(model_path.glob("*.onnx")):
+                print("exists")
+                success += 1
+                continue
+            
+            # Download to temp location, then move to correct location
+            import tempfile
+            import shutil
+            with tempfile.TemporaryDirectory() as tmpdir:
+                app = FaceAnalysis(name=name, root=tmpdir)
+                app.prepare(ctx_id=0, det_size=(640, 640))
+                
+                # Move from temp to models folder
+                src = Path(tmpdir) / 'models' / name
+                if src.exists():
+                    shutil.move(str(src), str(model_path))
+                    print("done")
+                    success += 1
+                else:
+                    print("error: model not found after download")
+            
+            # Clean up any zip files
+            for zip_file in models_dir.glob("*.zip"):
+                zip_file.unlink()
+            
+        except Exception as e:
+            print(f"error: {e}")
+    
+    print("\n" + "=" * 70)
+    if success == 2:
+        print("Both models ready!")
+        return True
+    elif success > 0:
+        print(f"{success}/2 models available")
+        return True
+    else:
+        print("Failed to download models")
         return False
-
-def update_main_script(model_name):
-    """Update the main script to use the selected model"""
-    try:
-        with open('test.py', 'r') as f:
-            content = f.read()
-        
-        # Update MODEL_NAME
-        content = content.replace(
-            "MODEL_NAME = 'buffalo_m'",
-            f"MODEL_NAME = '{model_name}'"
-        )
-        
-        with open('test.py', 'w') as f:
-            f.write(content)
-        
-        print(f"✓ Updated test.py to use {model_name} model")
-        
-    except Exception as e:
-        print(f"Warning: Could not update test.py automatically: {e}")
-        print(f"Please manually change MODEL_NAME to '{model_name}' in test.py")
 
 def check_requirements():
-    """Check if all requirements are installed"""
-    required_packages = ['cv2', 'numpy', 'onnxruntime', 'insightface']
+    required = ['cv2', 'numpy', 'onnxruntime', 'insightface', 'PyQt5']
     missing = []
     
-    for package in required_packages:
+    for pkg in required:
         try:
-            if package == 'cv2':
+            if pkg == 'cv2':
                 import cv2
-            elif package == 'numpy':
+            elif pkg == 'numpy':
                 import numpy
-            elif package == 'onnxruntime':
+            elif pkg == 'onnxruntime':
                 import onnxruntime
-            elif package == 'insightface':
+                print(f"ONNX Runtime version: {onnxruntime.__version__}")
+                providers = onnxruntime.get_available_providers()
+                if 'CUDAExecutionProvider' in providers or 'TensorrtExecutionProvider' in providers:
+                    print("GPU acceleration: Available")
+                else:
+                    print("GPU acceleration: Not available (CPU only)")
+            elif pkg == 'insightface':
                 import insightface
+            elif pkg == 'PyQt5':
+                import PyQt5
         except ImportError:
-            missing.append(package)
+            missing.append(pkg)
     
     if missing:
-        print(f"Error: Missing required packages: {missing}")
-        print("Please run: pip install -r requirements.txt")
+        print(f"Missing: {', '.join(missing)}")
+        print("Run: pip install -r requirements.txt")
         return False
-    
     return True
 
 def main():
-    """Main setup function"""
-    print("Checking requirements...")
+    import sys
+    auto_yes = '--yes' in sys.argv or '-y' in sys.argv
     
     if not check_requirements():
         sys.exit(1)
     
-    print("✓ All requirements satisfied")
+    print("Requirements OK\n")
     
-    if not setup_models():
+    if not setup_models(auto_yes):
         sys.exit(1)
     
-    print("\n" + "=" * 50)
-    print("Setup complete! 🎉")
-    print("\nTo run the AI Surveillance Camera:")
-    print("  python test.py")
-    print("\nControls:")
-    print("  - Press 'q' to quit")
-    print("  - The system will automatically detect your webcam")
-    print("\nFor more information, see README.md")
+    print("\nSetup Complete!")
+    print("Run: python gui_app_qt.py")
+    print("=" * 70)
 
 if __name__ == "__main__":
     main()
