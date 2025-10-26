@@ -1,15 +1,10 @@
-"""
-AI Surveillance Camera - PyQt5 Version
-Modern, beautiful interface for face detection and recognition
-"""
-
 import sys
 import cv2
 import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QPushButton, QLabel, QTextEdit, QFrame, QSlider)
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread
-from PyQt5.QtGui import QImage, QPixmap, QFont, QPalette, QColor
+                             QHBoxLayout, QPushButton, QLabel, QTextEdit, QFrame)
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QImage, QPixmap, QFont
 import time
 from numpy.linalg import norm as l2norm
 
@@ -25,6 +20,12 @@ EPSILON = 1e-12
 MODEL_OPTIONS = {
     0: {'name': 'buffalo_s', 'label': 'Speed', 'precision': 'float32'},
     1: {'name': 'buffalo_l', 'label': 'Accuracy', 'precision': 'float64'}
+}
+
+RESOLUTION_OPTIONS = {
+    0: {'size': (320, 320), 'label': '320p'},
+    1: {'size': (640, 640), 'label': '640p'},
+    2: {'size': (1024, 1024), 'label': '1024p'}
 }
 
 def get_providers(use_fp16=False):
@@ -341,6 +342,7 @@ class SurveillanceApp(QMainWindow):
         self.faces = []
         self.fps = 0
         self.current_model_index = 1  # Start with Accuracy (buffalo_l)
+        self.current_resolution_index = 1  # Start with 640p
         self.use_high_precision = True
         
         # Initialize models
@@ -392,6 +394,14 @@ class SurveillanceApp(QMainWindow):
         self.model_btn.clicked.connect(self.toggle_model)
         control_layout.addWidget(self.model_btn)
         
+        control_layout.addSpacing(20)
+        
+        self.resolution_btn = QPushButton("📐 640p")
+        self.resolution_btn.setObjectName("resolutionButton")
+        self.resolution_btn.setFixedSize(150, 50)
+        self.resolution_btn.clicked.connect(self.toggle_resolution)
+        control_layout.addWidget(self.resolution_btn)
+        
         control_layout.addStretch()
         
         # Stats label
@@ -429,7 +439,7 @@ class SurveillanceApp(QMainWindow):
         info_frame.setLayout(info_layout)
         
         # Header
-        header_label = QLabel("📊 FACE EMBEDDINGS")
+        header_label = QLabel("FACE EMBEDDINGS")
         header_label.setObjectName("headerLabel")
         header_label.setAlignment(Qt.AlignCenter)
         info_layout.addWidget(header_label)
@@ -474,40 +484,6 @@ class SurveillanceApp(QMainWindow):
             
             #cameraButton:pressed {
                 background-color: #2a2a2a;
-            }
-            
-            #modeButtonAccuracy {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #00dd00, stop:1 #00aa00);
-                color: #ffffff;
-                border: 2px solid #00ff00;
-                border-radius: 10px;
-                font-size: 15px;
-                font-weight: bold;
-                padding: 5px;
-            }
-            
-            #modeButtonAccuracy:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #00ff00, stop:1 #00cc00);
-                border: 2px solid #00ff66;
-            }
-            
-            #modeButtonSpeed {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #ff8800, stop:1 #ff5500);
-                color: #ffffff;
-                border: 2px solid #ffaa00;
-                border-radius: 10px;
-                font-size: 15px;
-                font-weight: bold;
-                padding: 5px;
-            }
-            
-            #modeButtonSpeed:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #ffaa00, stop:1 #ff7700);
-                border: 2px solid #ffcc00;
             }
             
             QPushButton:pressed {
@@ -577,24 +553,40 @@ class SurveillanceApp(QMainWindow):
                 background: #009900;
             }
             
-            #modelStatusLabel {
-                color: #00ff00;
+            #resolutionButton {
+                background: #0088dd;
+                color: white;
                 font-size: 13px;
                 font-weight: bold;
-                padding: 3px;
+                border: none;
+                border-radius: 5px;
+                padding: 10px;
+            }
+            
+            #resolutionButton:hover {
+                background: #00aaff;
+            }
+            
+            #resolutionButton:pressed {
+                background: #0066aa;
             }
         """)
     
-    def load_model(self, model_index):
-        model_info = MODEL_OPTIONS[model_index]
-        model_name = model_info['name']
+    def load_model(self, model_index, resolution_index=None):
+        if resolution_index is None:
+            resolution_index = self.current_resolution_index
         
-        print(f"Loading {model_name} model...")
+        model_info = MODEL_OPTIONS[model_index]
+        resolution_info = RESOLUTION_OPTIONS[resolution_index]
+        model_name = model_info['name']
+        det_size = resolution_info['size']
+        
+        print(f"Loading {model_name} model with {resolution_info['label']} resolution...")
         
         try:
             providers = get_providers(use_fp16=False)
             self.app = FaceAnalysis(model_name=model_name, allowed_modules=ALLOWED_MODULES, providers=providers)
-            self.app.prepare(ctx_id=0, det_size=DETECTION_SIZE)
+            self.app.prepare(ctx_id=0, det_size=det_size)
             self.face_tracker = FaceTracker(avg_window_seconds=1.0)
             
             # Set precision based on model
@@ -640,23 +632,23 @@ class SurveillanceApp(QMainWindow):
         except Exception as e:
             print(f"Failed: {e}")
     
-    def toggle_precision_mode(self):
-        # Speed model is always float32
-        if self.current_model_index == 0:
-            return
+    def toggle_resolution(self):
+        self.running = False
+        if self.cap:
+            self.cap.release()
         
-        self.use_high_precision = not self.use_high_precision
-        Face.high_precision_mode = self.use_high_precision
+        # Cycle through resolution options
+        self.current_resolution_index = (self.current_resolution_index + 1) % len(RESOLUTION_OPTIONS)
+        resolution_info = RESOLUTION_OPTIONS[self.current_resolution_index]
         
-        if self.use_high_precision:
-            self.mode_btn.setText("⚡ PRECISION MODE")
-            self.mode_btn.setObjectName("modeButtonAccuracy")
-        else:
-            self.mode_btn.setText("🚀 FAST PRECISION")
-            self.mode_btn.setObjectName("modeButtonSpeed")
-        
-        # Reapply stylesheet to update button style
-        self.apply_stylesheet()
+        try:
+            self.load_model(self.current_model_index, self.current_resolution_index)
+            self.resolution_btn.setText(f"📐 {resolution_info['label']}")
+            
+            self.start_camera()
+            print(f"Switched to {resolution_info['label']} resolution")
+        except Exception as e:
+            print(f"Failed to switch resolution: {e}")
     
     def switch_camera(self):
         if self.cap:
@@ -747,6 +739,10 @@ class SurveillanceApp(QMainWindow):
         return img
     
     def update_info_panel(self, faces):
+        # Save current scroll position
+        scrollbar = self.info_text.verticalScrollBar()
+        scroll_position = scrollbar.value()
+        
         html = """
         <style>
             body { background-color: #1a1a1a; color: #e0e0e0; font-family: Consolas, monospace; }
@@ -791,6 +787,9 @@ class SurveillanceApp(QMainWindow):
                 html += "<div class='separator'>═════════════════════════════════════════════════</div>"
         
         self.info_text.setHtml(html)
+        
+        # Restore scroll position
+        scrollbar.setValue(scroll_position)
     
     def closeEvent(self, event):
         self.running = False
