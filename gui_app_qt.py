@@ -894,24 +894,41 @@ class SurveillanceApp(QMainWindow):
                 self.record_btn.setStyleSheet("")  # Reset style
                 self.recording_saved_time = None
         
-        # Face matching/recognition - Use 1s averaged embedding for stability
+        # Face matching/recognition - Only match the highest similarity face
+        # Recompute for each frame (no caching of old stats)
         face_similarities = []
+        best_match_index = None
+        best_similarity = -1.0
+        
         if self.recorded_face_embedding is not None and len(tracked_faces) > 0:
             recorded_norm = self.recorded_face_embedding / (l2norm(self.recorded_face_embedding) + EPSILON)
             
+            # Calculate similarities for all faces first
+            temp_similarities = []
             for face in tracked_faces:
-                # Prefer 1s averaged embedding for stable comparison
+                # Use current embedding only (no averaging to avoid caching old stats)
                 embedding_to_use = None
-                if hasattr(face, 'avg_embedding') and face.avg_embedding is not None:
-                    embedding_to_use = face.avg_embedding
-                elif hasattr(face, 'embedding') and face.embedding is not None:
+                if hasattr(face, 'embedding') and face.embedding is not None:
                     embedding_to_use = face.embedding
                 
                 if embedding_to_use is not None:
                     current_norm = embedding_to_use / (l2norm(embedding_to_use) + EPSILON)
                     similarity = float(np.dot(recorded_norm, current_norm))
                     similarity = np.clip(similarity, -1.0, 1.0)
-                    face_similarities.append(similarity)
+                    temp_similarities.append(similarity)
+                else:
+                    temp_similarities.append(None)
+            
+            # Find the best match
+            for i, sim in enumerate(temp_similarities):
+                if sim is not None and sim > best_similarity:
+                    best_similarity = sim
+                    best_match_index = i
+            
+            # Only keep similarity for the best match, set others to None
+            for i in range(len(tracked_faces)):
+                if i == best_match_index and best_similarity > 0.4:  # Only show if reasonable match
+                    face_similarities.append(best_similarity)
                 else:
                     face_similarities.append(None)
         
@@ -979,10 +996,10 @@ class SurveillanceApp(QMainWindow):
                 cv2.putText(img, label, (box[0] + 5, box[3] + text_height + 10),
                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, label_color, 2)
             
-            # Draw age and gender
-            if face.gender is not None and face.age is not None:
+            # Draw gender only (age will be shown in info panel)
+            if face.gender is not None:
                 gender = "Male" if face.gender == 1 else "Female"
-                text = f"{gender}, {int(face.age)}"
+                text = f"{gender}"
                 
                 # Background for text
                 (text_width, text_height), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
@@ -1018,13 +1035,22 @@ class SurveillanceApp(QMainWindow):
             for i, face in enumerate(faces, 1):
                 html += f"<div class='face-header'>═══ FACE #{i} ═══</div>"
                 
-                # Show similarity if available
+                # Show similarity if available (only for matched face)
                 if similarities and i-1 < len(similarities) and similarities[i-1] is not None:
                     similarity = similarities[i-1]
                     if similarity > 0.6:
                         html += f"<div class='match-status'>✓ MATCH: {similarity*100:.1f}% similarity</div>"
                     else:
                         html += f"<div class='nomatch-status'>✗ Unknown: {similarity*100:.1f}% similarity</div>"
+                
+                # Show Approximate age and Gender guess
+                if face.age is not None or face.gender is not None:
+                    html += "<div class='emb-header'>● Demographics:</div>"
+                    if face.age is not None:
+                        html += f"<div class='info'>Approximate age: {int(face.age)} years</div>"
+                    if face.gender is not None:
+                        gender_guess = "Male" if face.gender == 1 else "Female"
+                        html += f"<div class='info'>Gender guess: {gender_guess}</div>"
                 
                 # Raw Embedding
                 if face.embedding is not None:
@@ -1040,15 +1066,6 @@ class SurveillanceApp(QMainWindow):
                     norm_str = ", ".join([f"{v:.6f}" for v in face.normed_embedding[:10]])
                     html += f"<div class='emb-data'>[{norm_str}, ...]</div>"
                     html += f"<div class='info'>Norm: {l2norm(face.normed_embedding):.6f}</div>"
-                
-                # Averaged embedding
-                if hasattr(face, 'avg_embedding') and face.avg_embedding is not None:
-                    html += "<div class='emb-header'>● 1s Averaged Embedding:</div>"
-                    avg_str = ", ".join([f"{v:.6f}" for v in face.avg_embedding[:10]])
-                    html += f"<div class='emb-data'>[{avg_str}, ...]</div>"
-                    html += f"<div class='info'>Avg Norm: {face.avg_embedding_norm:.6f}</div>"
-                    if hasattr(face, 'avg_embedding_count'):
-                        html += f"<div class='info'>Samples: {face.avg_embedding_count}</div>"
                 
                 html += "<div class='separator'>═════════════════════════════════════════════════</div>"
         
