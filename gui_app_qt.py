@@ -894,16 +894,20 @@ class SurveillanceApp(QMainWindow):
                 self.record_btn.setStyleSheet("")  # Reset style
                 self.recording_saved_time = None
         
-        # Face matching/recognition - Only match the highest similarity face
-        # Recompute for each frame (no caching of old stats)
+        # Face matching/recognition - Two-stage matching with L2 norm pre-filtering
+        # Stage 1: Compare L2 norms first
+        # Stage 2: Compare full embeddings only if norms are similar
+        # This reduces false positives significantly
         face_similarities = []
         best_match_index = None
         best_similarity = -1.0
+        norm_threshold = 0.30  # Allow 30% difference in L2 norm
         
         if self.recorded_face_embedding is not None and len(tracked_faces) > 0:
-            recorded_norm = self.recorded_face_embedding / (l2norm(self.recorded_face_embedding) + EPSILON)
+            recorded_norm_value = l2norm(self.recorded_face_embedding)
+            recorded_norm = self.recorded_face_embedding / (recorded_norm_value + EPSILON)
             
-            # Calculate similarities for all faces first
+            # Calculate similarities for all faces with two-stage filtering
             temp_similarities = []
             for face in tracked_faces:
                 # Use current embedding only (no averaging to avoid caching old stats)
@@ -912,10 +916,19 @@ class SurveillanceApp(QMainWindow):
                     embedding_to_use = face.embedding
                 
                 if embedding_to_use is not None:
-                    current_norm = embedding_to_use / (l2norm(embedding_to_use) + EPSILON)
-                    similarity = float(np.dot(recorded_norm, current_norm))
-                    similarity = np.clip(similarity, -1.0, 1.0)
-                    temp_similarities.append(similarity)
+                    # Stage 1: Compare L2 norms first
+                    current_norm_value = l2norm(embedding_to_use)
+                    norm_difference = abs(current_norm_value - recorded_norm_value) / recorded_norm_value
+                    
+                    if norm_difference <= norm_threshold:
+                        # Stage 2: Norms are similar, proceed with full embedding comparison
+                        current_norm = embedding_to_use / (current_norm_value + EPSILON)
+                        similarity = float(np.dot(recorded_norm, current_norm))
+                        similarity = np.clip(similarity, -1.0, 1.0)
+                        temp_similarities.append(similarity)
+                    else:
+                        # Norms too different, skip full comparison (reduces false positives)
+                        temp_similarities.append(None)
                 else:
                     temp_similarities.append(None)
             
@@ -965,6 +978,7 @@ class SurveillanceApp(QMainWindow):
             box = face.bbox.astype(int)
             
             # Determine box color and label based on similarity
+            # Red for unknown faces, Green for known/matched faces
             label = None
             label_color = None
             if similarities and i < len(similarities) and similarities[i] is not None:
@@ -975,9 +989,9 @@ class SurveillanceApp(QMainWindow):
                     label = f"MATCH {similarity*100:.1f}%"
                     label_color = (0, 255, 0)
                 else:
-                    box_color = (0, 255, 0)  # Default green, no label
+                    box_color = (0, 0, 255)  # Red - unknown/no match
             else:
-                box_color = (0, 255, 0)  # Default green
+                box_color = (0, 0, 255)  # Red - unknown (no recorded face or no match)
             
             cv2.rectangle(img, (box[0], box[1]), (box[2], box[3]), box_color, 2)
             
@@ -988,26 +1002,13 @@ class SurveillanceApp(QMainWindow):
                     kp_color = (0, 255, 0) if l in [0, 3] else (0, 0, 255)
                     cv2.circle(img, (kps[l][0], kps[l][1]), 2, kp_color, -1)
             
-            # Draw similarity label if available
+            # Draw similarity label only if there's a match
             if label:
                 (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
                 cv2.rectangle(img, (box[0], box[3] + 5), 
                              (box[0] + text_width + 10, box[3] + text_height + 15), (0, 0, 0), -1)
                 cv2.putText(img, label, (box[0] + 5, box[3] + text_height + 10),
                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, label_color, 2)
-            
-            # Draw gender only (age will be shown in info panel)
-            if face.gender is not None:
-                gender = "Male" if face.gender == 1 else "Female"
-                text = f"{gender}"
-                
-                # Background for text
-                (text_width, text_height), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                cv2.rectangle(img, (box[0], box[1] - text_height - 10), 
-                             (box[0] + text_width + 10, box[1]), (0, 0, 0), -1)
-                
-                cv2.putText(img, text, (box[0] + 5, box[1] - 5),
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
         
         return img
     
@@ -1052,20 +1053,31 @@ class SurveillanceApp(QMainWindow):
                         gender_guess = "Male" if face.gender == 1 else "Female"
                         html += f"<div class='info'>Gender guess: {gender_guess}</div>"
                 
-                # Raw Embedding
+                # L2 Norm (prominent display)
                 if face.embedding is not None:
-                    html += "<div class='emb-header'>● Raw Embedding (512D):</div>"
+                    html += "<div class='emb-header'>● L2 Norm Analysis:</div>"
+                    html += f"<div style='color: #00ff88; font-weight: bold; font-size: 14px; margin-left: 10px;'>L2 Norm: {face.embedding_norm:.6f}</div>"
+                    
+                    # Show norm comparison if we have a recorded face
+                    if self.recorded_face_embedding is not None:
+                        recorded_norm_value = l2norm(self.recorded_face_embedding)
+                        norm_diff = abs(face.embedding_norm - recorded_norm_value)
+                        norm_diff_pct = (norm_diff / recorded_norm_value) * 100
+                        
+                        html += f"<div style='color: #cccccc; margin-left: 10px; margin-top: 5px;'>Recorded: {recorded_norm_value:.6f}</div>"
+                        html += f"<div style='color: #cccccc; margin-left: 10px;'>Difference: {norm_diff:.6f} ({norm_diff_pct:.2f}%)</div>"
+                        
+                        if norm_diff_pct <= 30.0:  # Matches our threshold
+                            html += f"<div style='color: #00ff00; font-weight: bold; margin-left: 10px; margin-top: 3px;'>✓ PASS - Within threshold</div>"
+                        else:
+                            html += f"<div style='color: #ff6666; font-weight: bold; margin-left: 10px; margin-top: 3px;'>✗ FILTERED - Exceeds threshold</div>"
+                
+                # Raw Embedding (condensed)
+                if face.embedding is not None:
+                    html += "<div class='emb-header'>● Embedding (512D):</div>"
                     emb_str = ", ".join([f"{v:.6f}" for v in face.embedding[:10]])
                     html += f"<div class='emb-data'>[{emb_str}, ...]</div>"
-                    html += f"<div class='info'>Norm: {face.embedding_norm:.6f}</div>"
                     html += f"<div class='info'>Type: {face.embedding.dtype}</div>"
-                
-                # Normalized embedding
-                if face.normed_embedding is not None:
-                    html += "<div class='emb-header'>● Normalized Embedding:</div>"
-                    norm_str = ", ".join([f"{v:.6f}" for v in face.normed_embedding[:10]])
-                    html += f"<div class='emb-data'>[{norm_str}, ...]</div>"
-                    html += f"<div class='info'>Norm: {l2norm(face.normed_embedding):.6f}</div>"
                 
                 html += "<div class='separator'>═════════════════════════════════════════════════</div>"
         
@@ -1075,8 +1087,10 @@ class SurveillanceApp(QMainWindow):
             html += "<div class='emb-header'>● Saved 512D Vector:</div>"
             rec_str = ", ".join([f"{v:.6f}" for v in self.recorded_face_embedding[:10]])
             html += f"<div class='emb-data'>[{rec_str}, ...]</div>"
-            html += f"<div class='info'>Norm: {l2norm(self.recorded_face_embedding):.6f}</div>"
+            recorded_norm_val = l2norm(self.recorded_face_embedding)
+            html += f"<div style='color: #00ff88; font-weight: bold; font-size: 14px; margin-left: 10px;'>L2 Norm: {recorded_norm_val:.6f}</div>"
             html += f"<div class='info'>Type: {self.recorded_face_embedding.dtype}</div>"
+            html += "<div style='color: #ffaa00; margin-left: 10px; margin-top: 5px;'>ℹ Norm threshold: ±30% for matching</div>"
         
         self.info_text.setHtml(html)
         
