@@ -2,11 +2,17 @@ import sys
 import cv2
 import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QPushButton, QLabel, QTextEdit, QFrame)
+                             QHBoxLayout, QPushButton, QLabel, QTextEdit, QFrame,
+                             QInputDialog, QMessageBox, QDialog, QFormLayout, QLineEdit,
+                             QSpinBox, QComboBox, QDialogButtonBox)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap, QFont
 import time
 from numpy.linalg import norm as l2norm
+
+# Import database module
+from database import FaceDatabase
+from config import DB_CONFIG, FACE_MATCH_THRESHOLD, RECORDING_DURATION, VECTOR_SEARCH_ENABLED
 
 import os
 import os.path as osp
@@ -118,6 +124,113 @@ class Face(dict):
         if self.gender is None:
             return None
         return 'M' if self.gender == 1 else 'F'
+    
+    @property
+    def gender_string(self):
+        if self.gender is None:
+            return None
+        return 'Male' if self.gender == 1 else 'Female'
+
+
+class FaceInfoDialog(QDialog):
+    """Dialog to input face information before saving to database"""
+    
+    def __init__(self, parent=None, detected_age=None, detected_gender=None):
+        super().__init__(parent)
+        self.setWindowTitle("Save Face to Database")
+        self.setModal(True)
+        self.setMinimumWidth(400)
+        
+        # Layout
+        layout = QFormLayout()
+        
+        # Name input (required)
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("Enter person's name...")
+        layout.addRow("Name*:", self.name_input)
+        
+        # Gender selection (with detected value)
+        self.gender_combo = QComboBox()
+        self.gender_combo.addItems(["Unknown", "Male", "Female"])
+        if detected_gender:
+            self.gender_combo.setCurrentText(detected_gender)
+        layout.addRow("Gender:", self.gender_combo)
+        
+        # Age input (with detected value)
+        self.age_input = QSpinBox()
+        self.age_input.setRange(0, 150)
+        self.age_input.setSpecialValueText("Unknown")
+        if detected_age and detected_age > 0:
+            self.age_input.setValue(int(detected_age))
+        layout.addRow("Age:", self.age_input)
+        
+        # Buttons
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addRow(button_box)
+        
+        self.setLayout(layout)
+        
+        # Apply dark theme
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #2a2a2a;
+                color: #ffffff;
+            }
+            QLabel {
+                color: #ffffff;
+                font-size: 13px;
+            }
+            QLineEdit, QSpinBox, QComboBox {
+                background-color: #3a3a3a;
+                color: #ffffff;
+                border: 2px solid #4a4a4a;
+                border-radius: 5px;
+                padding: 5px;
+                font-size: 13px;
+            }
+            QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
+                border: 2px solid #0088dd;
+            }
+            QPushButton {
+                background-color: #0088dd;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                padding: 8px 15px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #00aaff;
+            }
+            QPushButton:pressed {
+                background-color: #0066aa;
+            }
+        """)
+    
+    def get_data(self):
+        """Get the entered data"""
+        name = self.name_input.text().strip()
+        if not name:
+            return None
+        
+        gender = self.gender_combo.currentText()
+        if gender == "Unknown":
+            gender = None
+        
+        age = self.age_input.value()
+        if age == 0:
+            age = None
+        
+        return {
+            'name': name,
+            'gender': gender,
+            'age': age
+        }
 
 
 class FaceTracker:
@@ -349,12 +462,22 @@ class SurveillanceApp(QMainWindow):
         self.is_recording = False
         self.waiting_for_face = False
         self.recording_start_time = None
-        self.recording_duration = 10.0  # 10 seconds
+        self.recording_duration = RECORDING_DURATION  # From config
         self.recording_embeddings = []
         self.recorded_face_embedding = None  # The averaged 512D vector
         self.pre_recording_model = None
         self.pre_recording_resolution = None
         self.recording_saved_time = None
+        self.recording_face_metadata = None  # Store age/gender from recording
+        
+        # Database state
+        self.db = None
+        self.db_connected = False
+        self.db_faces_cache = []  # Cache of database faces for matching
+        self.use_vector_search = VECTOR_SEARCH_ENABLED
+        
+        # Initialize database
+        self.init_database()
         
         # Initialize models
         try:
@@ -630,6 +753,26 @@ class SurveillanceApp(QMainWindow):
             }
         """)
     
+    def init_database(self):
+        """Initialize database connection"""
+        try:
+            self.db = FaceDatabase(**DB_CONFIG)
+            if self.db.connect():
+                if self.db.initialize_database():
+                    self.db_connected = True
+                    face_count = self.db.get_face_count()
+                    print(f"✓ Database ready with {face_count} saved face(s)")
+                else:
+                    print("✗ Database initialization failed")
+                    self.db_connected = False
+            else:
+                print("✗ Database connection failed - using memory-only mode")
+                self.db_connected = False
+        except Exception as e:
+            print(f"✗ Database error: {e}")
+            self.db_connected = False
+            self.db = None
+    
     def load_model(self, model_index, resolution_index=None):
         if resolution_index is None:
             resolution_index = self.current_resolution_index
@@ -738,6 +881,7 @@ class SurveillanceApp(QMainWindow):
         self.recording_start_time = None
         self.recording_embeddings = []
         self.recorded_face_embedding = None
+        self.recording_face_metadata = None  # Reset metadata
         
         # Update UI
         self.record_btn.setEnabled(False)
@@ -770,6 +914,10 @@ class SurveillanceApp(QMainWindow):
             
             print(f"✓ Face recorded! Averaged {count} embeddings over 10 seconds into 512D vector")
             print(f"  Embedding norm: {l2norm(self.recorded_face_embedding):.6f}")
+            
+            # Show dialog to save to database
+            if self.db_connected and self.recorded_face_embedding is not None:
+                self.show_save_face_dialog()
         else:
             print("✗ No face detected during recording")
             self.recorded_face_embedding = None
@@ -810,6 +958,60 @@ class SurveillanceApp(QMainWindow):
             self.record_btn.setText("⏺ Record Face")
             self.record_btn.setStyleSheet("")  # Reset style
         self.recording_status.setVisible(False)
+    
+    def show_save_face_dialog(self):
+        """Show dialog to input name and save face to database"""
+        # Get detected age and gender from recording metadata
+        detected_age = None
+        detected_gender = None
+        
+        if self.recording_face_metadata:
+            detected_age = self.recording_face_metadata.get('age')
+            detected_gender = self.recording_face_metadata.get('gender')
+        
+        # Show dialog
+        dialog = FaceInfoDialog(
+            parent=self,
+            detected_age=detected_age,
+            detected_gender=detected_gender
+        )
+        
+        if dialog.exec_() == QDialog.Accepted:
+            data = dialog.get_data()
+            if data:
+                # Save to database
+                face_id = self.db.save_face(
+                    name=data['name'],
+                    embedding=self.recorded_face_embedding,
+                    gender=data['gender'],
+                    age=data['age'],
+                    metadata={
+                        'recording_duration': self.recording_duration,
+                        'embeddings_count': len(self.recording_embeddings),
+                        'model': MODEL_OPTIONS[self.current_model_index]['name'],
+                        'resolution': RESOLUTION_OPTIONS[self.current_resolution_index]['label']
+                    }
+                )
+                
+                if face_id:
+                    QMessageBox.information(
+                        self,
+                        "Success",
+                        f"Face saved to database!\nName: {data['name']}\nID: {face_id}"
+                    )
+                    print(f"✓ Saved to database: {data['name']} (ID: {face_id})")
+                else:
+                    QMessageBox.warning(
+                        self,
+                        "Error",
+                        "Failed to save face to database."
+                    )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Input",
+                    "Name is required to save face."
+                )
     
     def switch_camera(self):
         if self.cap:
@@ -878,6 +1080,13 @@ class SurveillanceApp(QMainWindow):
                         if not (np.any(np.isnan(face.embedding)) or np.any(np.isinf(face.embedding))):
                             dtype = np.float64 if Face.high_precision_mode else np.float32
                             self.recording_embeddings.append(face.embedding.astype(dtype))
+                    
+                    # Store metadata from the face (age and gender) for later use
+                    if not self.recording_face_metadata:
+                        self.recording_face_metadata = {
+                            'age': face.age if hasattr(face, 'age') else None,
+                            'gender': face.gender_string if hasattr(face, 'gender_string') else None
+                        }
                 
                 # Draw recording indicator on frame
                 cv2.putText(frame, f"RECORDING: {remaining:.1f}s", (20, 50),
@@ -894,23 +1103,45 @@ class SurveillanceApp(QMainWindow):
                 self.record_btn.setStyleSheet("")  # Reset style
                 self.recording_saved_time = None
         
-        # Face matching/recognition - Two-stage matching with L2 norm pre-filtering
-        # Stage 1: Compare L2 norms first
-        # Stage 2: Compare full embeddings only if norms are similar
-        # This reduces false positives significantly
+        # Face matching/recognition using database vector search
         face_similarities = []
-        best_match_index = None
-        best_similarity = -1.0
-        norm_threshold = 0.30  # Allow 30% difference in L2 norm
+        face_match_names = []
+        face_match_ids = []
         
-        if self.recorded_face_embedding is not None and len(tracked_faces) > 0:
+        if self.db_connected and self.use_vector_search and len(tracked_faces) > 0:
+            # Use database vector search for each detected face
+            for face in tracked_faces:
+                if hasattr(face, 'embedding') and face.embedding is not None:
+                    # Search database for similar faces
+                    matches = self.db.search_similar_faces(
+                        embedding=face.embedding,
+                        limit=1,
+                        threshold=FACE_MATCH_THRESHOLD
+                    )
+                    
+                    if matches and len(matches) > 0:
+                        # Best match found
+                        match = matches[0]
+                        face_similarities.append(match[4])  # similarity
+                        face_match_names.append(match[1])  # name
+                        face_match_ids.append(match[0])  # id
+                    else:
+                        face_similarities.append(None)
+                        face_match_names.append(None)
+                        face_match_ids.append(None)
+                else:
+                    face_similarities.append(None)
+                    face_match_names.append(None)
+                    face_match_ids.append(None)
+        elif self.recorded_face_embedding is not None and len(tracked_faces) > 0:
+            # Fallback: Use in-memory matching with recorded face
+            # Two-stage matching with L2 norm pre-filtering
             recorded_norm_value = l2norm(self.recorded_face_embedding)
             recorded_norm = self.recorded_face_embedding / (recorded_norm_value + EPSILON)
+            norm_threshold = 0.30  # Allow 30% difference in L2 norm
             
-            # Calculate similarities for all faces with two-stage filtering
             temp_similarities = []
             for face in tracked_faces:
-                # Use current embedding only (no averaging to avoid caching old stats)
                 embedding_to_use = None
                 if hasattr(face, 'embedding') and face.embedding is not None:
                     embedding_to_use = face.embedding
@@ -927,26 +1158,31 @@ class SurveillanceApp(QMainWindow):
                         similarity = np.clip(similarity, -1.0, 1.0)
                         temp_similarities.append(similarity)
                     else:
-                        # Norms too different, skip full comparison (reduces false positives)
                         temp_similarities.append(None)
                 else:
                     temp_similarities.append(None)
             
-            # Find the best match
+            # Find best match
+            best_match_index = None
+            best_similarity = -1.0
             for i, sim in enumerate(temp_similarities):
                 if sim is not None and sim > best_similarity:
                     best_similarity = sim
                     best_match_index = i
             
-            # Only keep similarity for the best match, set others to None
+            # Only keep similarity for the best match
             for i in range(len(tracked_faces)):
-                if i == best_match_index and best_similarity > 0.4:  # Only show if reasonable match
+                if i == best_match_index and best_similarity > 0.4:
                     face_similarities.append(best_similarity)
+                    face_match_names.append("Recorded Face")
+                    face_match_ids.append(None)
                 else:
                     face_similarities.append(None)
+                    face_match_names.append(None)
+                    face_match_ids.append(None)
         
         # Draw faces on frame
-        frame = self.draw_faces(frame, tracked_faces, face_similarities)
+        frame = self.draw_faces(frame, tracked_faces, face_similarities, face_match_names)
         
         # Calculate FPS
         self.fps = 1.0 / (time.time() - start_time) if (time.time() - start_time) > 0 else 0
@@ -971,9 +1207,9 @@ class SurveillanceApp(QMainWindow):
         self.video_label.setPixmap(scaled_pixmap)
         
         # Update info panel
-        self.update_info_panel(tracked_faces, face_similarities)
+        self.update_info_panel(tracked_faces, face_similarities, face_match_names, face_match_ids)
     
-    def draw_faces(self, img, faces, similarities=None):
+    def draw_faces(self, img, faces, similarities=None, match_names=None):
         for i, face in enumerate(faces):
             box = face.bbox.astype(int)
             
@@ -986,7 +1222,8 @@ class SurveillanceApp(QMainWindow):
                 # Only show label if it's a match (>0.6)
                 if similarity > 0.6:
                     box_color = (0, 255, 0)  # Green - MATCH
-                    label = f"MATCH {similarity*100:.1f}%"
+                    name = match_names[i] if match_names and i < len(match_names) and match_names[i] else "MATCH"
+                    label = f"{name} {similarity*100:.1f}%"
                     label_color = (0, 255, 0)
                 else:
                     box_color = (0, 0, 255)  # Red - unknown/no match
@@ -1012,7 +1249,7 @@ class SurveillanceApp(QMainWindow):
         
         return img
     
-    def update_info_panel(self, faces, similarities=None):
+    def update_info_panel(self, faces, similarities=None, match_names=None, match_ids=None):
         # Save current scroll position
         scrollbar = self.info_text.verticalScrollBar()
         scroll_position = scrollbar.value()
@@ -1026,9 +1263,17 @@ class SurveillanceApp(QMainWindow):
             .emb-header { color: #ffaa00; font-weight: bold; margin-top: 8px; }
             .emb-data { color: #cccccc; margin-left: 10px; }
             .info { color: #999999; margin-left: 10px; }
+            .db-info { color: #00aaff; font-weight: bold; margin-left: 10px; margin-top: 3px; }
             .separator { color: #3a3a3a; }
         </style>
         """
+        
+        # Show database connection status
+        if self.db_connected:
+            face_count = self.db.get_face_count() if self.db else 0
+            html += f"<div style='color: #00ff88; font-weight: bold; text-align: center; padding: 5px; background-color: #002200; border-radius: 5px; margin-bottom: 10px;'>📊 Database: Connected | {face_count} faces stored</div>"
+        else:
+            html += "<div style='color: #ff6666; font-weight: bold; text-align: center; padding: 5px; background-color: #220000; border-radius: 5px; margin-bottom: 10px;'>⚠ Database: Disconnected</div>"
         
         if not faces:
             html += "<p style='color: #666666; text-align: center; margin-top: 50px;'>No faces detected</p>"
@@ -1039,8 +1284,14 @@ class SurveillanceApp(QMainWindow):
                 # Show similarity if available (only for matched face)
                 if similarities and i-1 < len(similarities) and similarities[i-1] is not None:
                     similarity = similarities[i-1]
+                    name = match_names[i-1] if match_names and i-1 < len(match_names) and match_names[i-1] else "Unknown"
+                    db_id = match_ids[i-1] if match_ids and i-1 < len(match_ids) and match_ids[i-1] else None
+                    
                     if similarity > 0.6:
-                        html += f"<div class='match-status'>✓ MATCH: {similarity*100:.1f}% similarity</div>"
+                        html += f"<div class='match-status'>✓ MATCH: {name}</div>"
+                        html += f"<div class='db-info'>Similarity: {similarity*100:.1f}%</div>"
+                        if db_id:
+                            html += f"<div class='db-info'>Database ID: {db_id}</div>"
                     else:
                         html += f"<div class='nomatch-status'>✗ Unknown: {similarity*100:.1f}% similarity</div>"
                 
@@ -1101,6 +1352,8 @@ class SurveillanceApp(QMainWindow):
         self.running = False
         if self.cap:
             self.cap.release()
+        if self.db and self.db_connected:
+            self.db.disconnect()
         event.accept()
 
 
